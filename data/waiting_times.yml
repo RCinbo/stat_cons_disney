@@ -1,0 +1,26 @@
+..generic:
+  git2rdata: 0.4.0
+  optimize: yes
+  NA string: NA
+  sorting:
+  - file
+  - datetime
+  - SACTMIN
+  hash: 9864fa5bbb5aacaf195d35ec2f729d85d93c0e86
+  data_hash: 8833c20b22eb3bbb9a17dddcd1c83ed066e2af4b
+date:
+  class: character
+datetime:
+  class: POSIXct
+  origin: 1970-01-01 00:00:00
+  timezone: UTC
+SACTMIN:
+  class: integer
+file:
+  class: character
+start_wait:
+  class: POSIXct
+  origin: 1970-01-01 00:00:00
+  timezone: UTC
+posted_at_start_wait:
+  class: integer

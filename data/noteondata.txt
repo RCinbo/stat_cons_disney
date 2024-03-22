@@ -1,0 +1,46 @@
+Note that the file entitites_extra.csv is not available on Toledo or on the https://cdn.touringplans.com/datasets/ website while it is shown in the data_disney_world.pptx file
+
+
+The waiting times are always linked to a certain datetime. Each datetime (row in the data) has either an entry in the SACTMIN or in the SPOSTMIN column, never in both. Am I right to assume that:
+(1) The posted times are supposed to inform customers on the expected time that they will queue if they *start* queueing at any given time.
+(2) The posted times (SPOSTMIN) do not change between two datetimes. So, if:
+	- in row 1 datetime = 2015-01-01 07:51:12 and SPOSTMIN = 45
+	- in row 2 datetime = 2015-01-01 08:02:13 and SPOSTMIN = 60
+	This means that the posted time was 45minutes from 7:15:12 until 08:02:13 and it changed at 08.02.13 to 60 minutes.
+(3) Customers can see the posted times when they start queueing. So assume we have the following entry:
+	- datetime = 2015-01-01 08:51:12 and SACTMIN = 52
+	This would interpret this as a customer that entered the ride at 08:51:12 and has waited 52 minutes in total. To figure out which time was posted when he entered the ride, we should look at SPOSTMIN 52 minutes before 08:51:12--> he saw a posted waiting time of 45 minutes when he started queueing.
+
+I also have some further questions: 
+* There are very little actual waiting times. For the 7 dwarfs, for instance, there are only 7635 actual waiting time in a 7 year period (jan2015-dec2021). I'd assumes there are far more visitors to this attraction (especially since the waiting times are so long). What determines which waiting times are registered or not? Would there be any selection bias in the waiting times that are registered (eg longer waiting times are more/less likely to be registered)? It would be interesting to know additional numbers like throughput throughout the day, or how many customers decided NOT to queue when presented with the posted waiting times (= "balking" in queueing theory).
+* Frome the "entities.csv" file, we know the duration of the ride but we do not know how many people can simultaneously go into the ride so only the duration will tell us very little about the expected throughput of the ride. Or should we be able to figure this out, together with the "average_wait_per_hundred"?
+* In the "entities.csv" file, average_wait_per_hundred is describes as "Hypathical wait time for every 100 people in the standby queue". It isn't really explained what a standby queue is. Should I interpret this as:
+(1) The average waiting time at a moment in time when there are exactly 100 people that simultaneously start queueing all at the same time and we register each of their 100 waiting times and take the average (first customers will have a short waiting time and last will have long waiting times).
+(2) The long-term average waiting time in the queue (all waiting times, at any moment in time)
+(3) The long-term average waiting time in the queue, but only over time instances when there were at least 100 people in the queue
+* Many rides for which we have waiting times which cannot be found in the "entities.csv" file
+	- Ariel's Grotto (there is one called The little mermaid ~ ariel's undersea adventure; is that the same one?
+	- Carousel of Progress
+	- Casey Jr Splash
+	- Country Bears
+	- Ench Tales W  Belle
+	- Hall of Presidents
+	- Liberty Sq Riverboat
+	- Main St Vehicles
+	- Navi River
+	- Pete's  Goofy Donald
+	- Pete's  Minnie Daisy
+	- Pirate's Adventure
+	- Sorcerers of The Mk
+	- Swiss Family Tree
+	- Tom Sawyer Island
+	- Town Sq Tink
+* Some rides (short_name) appear twice in the entities.csv file, often with a different opening day. Was the older ride replaced by the newer one of are there actually two ride with the same name? If there are two rides with the same short_name, to which of them do the waiting times pertain? (Dumbo, haunted mansion, It's A Small World, Jungle Cruise, Peter Pan's Flight, Pirates of Caribbean, Soarin', space mountain, splash mountain, Toy Story Mania!)
+* we are told that, if SPOSTMIN is -999, the ride is closed. Yet, I can find the following lines:
+date		datetime		SPOSTMIN
+01/02/2015	2015-01-02 23:16:12	60
+01/02/2015	2015-01-02 23:50:15	-999
+01/02/2015	2015-01-03 00:37:30	30
+01/02/2015	2015-01-03 00:48:47	60
+Does this mean that the ride was closed around 23:50 but people who were already in the queue could still queue on and they could still see a posted waiting time? As the posted waiting time increased again from 30 to 60, does this mean more people entered the queue still? If so, what does "closed" really mean if people can still go on the ride and even start queueing?
+

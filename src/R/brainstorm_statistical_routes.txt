@@ -1,0 +1,9 @@
+# Cox, stratified, elastic net
+Cox models; possible to stratify the cox model (eg a different one for each attraction)
+With elastic net to select a limited number of parameters in the myriad of possible parameters
+https://cran.r-project.org/web/packages/glmnet/vignettes/Coxnet.pdf
+
+
+# train-test?
+- maybe split the data in half time-wise. But first check whether the waiting times/waiting time predictions do not significantly change over time!
+-> model fit assessed with concordance of C-index; can we calculate the same concordance index for the predictions that were given in the parc?

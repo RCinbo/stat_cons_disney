@@ -1,0 +1,25 @@
+..generic:
+  git2rdata: 0.4.0
+  optimize: yes
+  NA string: NA
+  sorting:
+  - file
+  - opened_on
+  hash: 51942f754028c370acad50b3491669a9cc09be3f
+  data_hash: c180aef7dd8a963b10ac5d9c4aefa69d3bc817cb
+file:
+  class: character
+short_name:
+  class: character
+code:
+  class: character
+name:
+  class: character
+land:
+  class: character
+opened_on:
+  class: character
+duration:
+  class: numeric
+average_wait_per_hundred:
+  class: numeric
