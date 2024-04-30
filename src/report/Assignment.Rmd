@@ -22,6 +22,7 @@ library(tidyverse)
 library(rprojroot)
 library(kableExtra)
 library(git2rdata)
+library(patchwork)
 
 knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 knitr::opts_knit$set(
@@ -42,7 +43,7 @@ file_to_ride <- read_vc(file = "file_to_ride",
 
 # Introduction
 
-This report investigates the accuracy of the posted waiting times for different Disneyworld attractions.
+This report investigates the accuracy of the posted waiting times for different Disneyworld attractions. For transparency, all source code for this report and the data analysis can be found a github repository [@Carmen_Disney_world_waiting].
 More concrete, we will look at the difference between the posted waiting time when a customer start queueing and the actually realised waiting time.
 Although the waiting times for `r n_distinct(file_to_ride$file)` attractions are available, we will focus on `r n_distinct(file_to_ride %>% dplyr::filter(!is.na(code)) %>% dplyr::pull(file))` attractions for which metadata is available.
 Some attractions have more than one opening date.
@@ -77,10 +78,99 @@ It should be noted that we don't have the same amount of waiting times for each 
 #keep only waiting times with corresponding posted waiting time:
 waiting_times <- waiting_times %>%
   dplyr::filter(!is.na(posted_at_start_wait) &  posted_at_start_wait != -999 &
-                  SACTMIN >= 0 & SACTMIN <= 360)
+                  SACTMIN >= 0 & SACTMIN <= 360) %>%
+  mutate(diff = posted_at_start_wait - SACTMIN)
+set.seed(2024)
+sample <- waiting_times %>%
+  slice_sample(n = 10000) 
 ```
 
 
+We explore the difference between the actual and posted waiting times in Figure \@ref(fig:waiting-exploration).
+In the top left figure, the posted waiting time overestimated the actual waiting time for waiting times above the diagonal line.
+The color corresponds to the difference between the posted and actual waiting time.
+The top right figure also clearly shows that it is more likely that the actual waiting time is overestimated than underestimated (it is overestimated in approximately `r round(100*sum(sample$diff>0) / nrow(sample))`% of cases)).
+It is likely that this tendency to overestimate the waiting time is a tactical choice since it has been proven that people generally get more agitated if they need to wait longer than expected.
+Since the proposed waiting time will strongly influence the expected waiting times, it makes sense to overestimate rather than to underestimate the waiting time (see for instance @maister1984psychology and @chu2019psychology).
+Th bottom figures show the mean and 95% confidence interval of the actual waiting time (left) and the difference between the proposed and actual waiting time (right) over the day, depending on when the client started to wait.
+In the appendix, each of these figures are shown for each of the attractions separately (Figure \@ref(fig:waiting-exploration-app1) to \@ref(fig:waiting-exploration-app4)).
+
+```{r waiting-exploration, fig.cap = "Exploration of actual and posted waiting time and the difference between both."}
+#keep only waiting times with corresponding posted waiting time:
+p1 <- sample %>%
+  ggplot() +
+  geom_line(data = data.frame(x = c(0, max(sample$SACTMIN)),
+                              y = c(0,max(sample$posted_at_start_wait))),
+            aes(x = x, y = y)) +
+  geom_point(aes(x = SACTMIN, y = posted_at_start_wait, color = diff),
+             alpha = 0.5) +
+  scale_color_gradientn("Difference",
+                        colours =
+                          c("yellow", "orange", "red", "darkred")) +
+  xlab("Actual waiting time") +
+  ylab("Posted waiting time") +
+  guides(colour = "none") +
+  theme_bw()
+bin_width <- 10
+nbins = ceiling((max(sample$diff) - min(sample$diff))/bin_width)
+colfunc <- colorRampPalette(c("yellow", "orange", "red", "darkred"))
+
+p2 <- sample %>%
+  ggplot() +
+  geom_histogram(aes(x = diff, y = after_stat(count / sum(count))),
+                 binwidth = bin_width,
+                 fill = colfunc(nbins),
+                 alpha = 0.8) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage of waiting times") +
+  xlab("Posted - actual waiting time") +
+  theme_bw()
+
+p4 <- waiting_times %>%
+  mutate(
+    start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+    hour = hour(start_wait)) %>%
+  group_by(hour) %>%
+  summarize(mean = mean(diff),
+            st_dev = sd(diff),
+            nb = n(),
+            lower = mean - 1.95 * st_dev/sqrt(nb),
+            upper = mean + 1.95 * st_dev/sqrt(nb)) %>%
+  ungroup() %>%
+  filter(hour >= 6 & hour <= 23) %>%
+  ggplot(aes(x = hour, y = mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line() +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(6, 23, 3)) +
+  ylab("Proposed - actual waiting time (min)") +
+  xlab("Time of day")
+p3 <- waiting_times %>%
+  mutate(
+    start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+    hour = hour(start_wait)) %>%
+  group_by(hour) %>%
+  summarize(mean = mean(SACTMIN),
+            st_dev = sd(SACTMIN),
+            nb = n(),
+            lower = mean - 1.95 * st_dev/sqrt(nb),
+            upper = mean + 1.95 * st_dev/sqrt(nb)) %>%
+  ungroup() %>%
+  filter(hour >= 6 & hour <= 23) %>%
+  ggplot(aes(x = hour, y = mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line() +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(6, 23, 3)) +
+  ylab("Actual waiting time (min)") +
+  xlab("Time of day")
+
+
+p1 + p2 + p3 + p4
+```
 
 
 
@@ -89,6 +179,8 @@ waiting_times <- waiting_times %>%
 \appendix
 
 # Appendix
+
+## Number of registered waiting times
 
 ```{r nb-waiting-times-reg, fig.cap="Mean number of registered actual waiting times per day (and 95% conf. int.) for the different attractions.", fig.height = 4, fig.width = 8}
 ndays <- waiting_times %>%
@@ -112,8 +204,8 @@ ndays %>%
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
         legend.text = element_text(size = 8),
         legend.position = "bottom",
-        legend.margin=margin(0,0,0,0),
-        legend.box.margin=margin(-10,-10,-10,-10)) +
+        legend.margin = margin(0,0,0,0),
+        legend.box.margin = margin(-10,-10,-10,-10)) +
   ylab("Nb registered actual waiting times per day")
 ```
 
@@ -137,13 +229,142 @@ start_end %>%
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
         legend.text = element_text(size = 8),
         legend.position = "bottom",
-        legend.margin=margin(0,0,0,0),
-        legend.box.margin=margin(-10,-10,0,-10)) +
+        legend.margin = margin(0,0,0,0),
+        legend.box.margin = margin(-10,-10,0,-10)) +
   scale_x_discrete(name = "Attraction", breaks = start_end$file,
                    limits = start_end$file,
                    labels = str_wrap(ndays$short_name, width = 15)) +
   scale_color_gradientn("Nb waiting\n times",
                         colours =
-                          c("lightyellow", "yellow", "orange", "darkred"))
+                          c("yellow", "orange", "darkred"))
+
+```
+
+## Difference between the actual and posted waiting times per attraction
+
+Figure \@ref(fig:waiting-exploration-app1) shows the posted versus actual waiting times. *Enchanted Tiki Run* and *Flight of Passage* stand out for the shortest and longest posted and actual waiting times. The most extremely underestimated waiting times (in yellow) can be found in the *Soarin'* and *Flight of Passage* attractions.
+
+Figure \@ref(fig:waiting-exploration-app2) shows a histogram of the difference between the posted and actual waiting time. The percentage in the top right corner indicates the percentage of observations where the posted waiting time exceeds the actual waiting time. *Regal Carrousel* stands out since it is the only attraction where less than half of the waiting times are overextimated. 
+
+
+Figure \@ref(fig:waiting-exploration-app3) shows the actual waiting time over the day. We only show the mean and confidence interval if there are at least 5 customers who started waiting at that hour of the day and whose waiting time was registered. *Flight of Passage* and *7 Dwarfs Train* stand out since they have the highest waiting times. *Flight of Passage* has consistently high waiting times while most other attractions show a daily pattern with the highest waiting times between 10AM and 3PM.
+
+Figure \@ref(fig:waiting-exploration-app4) shows the difference between the posted and actual waiting times over the day. We only show the mean and confidence interval if there are at least 5 customers who started waiting at that hour of the day and whose waiting time was registered. Most attractions show higher overestimations of the waiting time as the day progresses (especially noticeable in *Flight of Passage*, *7 Dwarfs Train*, and *Rock Coaster*)
+
+```{r waiting-exploration-app1, fig.cap = "Exploration of actual and posted waiting time.", fig.width = 8, fig.height = 12}
+samplesize <- 2000 #keep at most this many waiting times per attraction to keep the figure manageable.
+counts <- waiting_times %>%
+  group_by(file) %>%
+  tally()
+waiting_times %>%
+  dplyr::filter(file %in% (waiting_times %>%
+                             group_by(file) %>%
+                             tally() %>%
+                             dplyr::filter(n > samplesize) %>%
+                             dplyr::pull(file))) %>%
+  group_by(file) %>%
+  slice_sample(n = 2000) %>%
+  ungroup() %>%
+  rbind(waiting_times %>%
+          dplyr::filter(file %in% (waiting_times %>%
+                             group_by(file) %>%
+                             tally() %>%
+                             dplyr::filter(n <= samplesize) %>%
+                             dplyr::pull(file)))) %>%
+  left_join(file_to_ride) %>%
+  ggplot() +
+  geom_line(data = data.frame(x = c(0, max(sample$SACTMIN)),
+                              y = c(0,max(sample$posted_at_start_wait))),
+            aes(x = x, y = y)) +
+  geom_point(aes(x = SACTMIN, y = posted_at_start_wait, color = diff),
+             alpha = 0.5) +
+  scale_color_gradientn("Difference",
+                        colours =
+                          c("yellow", "orange", "red", "darkred")) +
+  facet_wrap(vars(short_name), nrow = 6) +
+  xlab("Actual waiting time") +
+  ylab("Posted waiting time") +
+  guides(colour = "none") +
+  theme_bw()
+```
+
+```{r waiting-exploration-app2, warning = FALSE, fig.cap = "Histogram of the difference between posted and actual waiting time.", fig.width = 8, fig.height = 12}
+percentage_overestimated <- waiting_times %>%
+  mutate(diff = posted_at_start_wait - SACTMIN) %>%
+  group_by(file) %>%
+  summarize(n_over = sum(diff > 0),
+            perc = paste0(round(100 * n_over/n()), "%")) %>%
+  left_join(file_to_ride)
+
+waiting_times %>%
+  mutate(diff = posted_at_start_wait - SACTMIN) %>%
+  left_join(file_to_ride) %>%
+  ggplot() +
+  geom_histogram(aes(x = diff, y = after_stat(density) * bin_width),
+                 binwidth = bin_width,
+                 alpha = 0.8) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  geom_text(data = percentage_overestimated,
+             aes(x = 75, y = 0.6, label = perc)) +
+  scale_y_continuous(labels = scales::percent) +
+  facet_wrap(vars(short_name), nrow = 6) +
+  ylab("Percentage of waiting times") +
+  xlab("Posted - actual waiting time") +
+  xlim(c(-100, 100)) +
+  theme_bw()
+```
+
+```{r waiting-exploration-app3, fig.cap = "Exploration of the actual waiting timeover the day.", fig.width = 8, fig.height = 12}
+waiting_times %>%
+  mutate(
+    start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+    hour = hour(start_wait)) %>%
+  group_by(hour, file) %>%
+  summarize(mean = mean(SACTMIN),
+            st_dev = sd(SACTMIN),
+            nb = n(),
+            lower = mean - 1.95 * st_dev/sqrt(nb),
+            upper = mean + 1.95 * st_dev/sqrt(nb)) %>%
+  ungroup() %>%
+  left_join(file_to_ride) %>%
+  filter(hour >= 6 & hour <= 23 & nb > 5) %>%
+  ggplot(aes(x = hour, y = mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(facets = vars(short_name),
+             nrow = 6) +
+  scale_x_continuous(breaks = seq(6, 23, 3)) +
+  ylab("Actual waiting time (min)") +
+  xlab("Time of day")
+```
+
+```{r waiting-exploration-app4, fig.cap = "Difference between the posted and actual waiting time.", fig.width = 8, fig.height = 12}
+waiting_times %>%
+  mutate(
+    start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+    hour = hour(start_wait)) %>%
+  group_by(hour, file) %>%
+  summarize(mean = mean(diff),
+            st_dev = sd(diff),
+            nb = n(),
+            lower = mean - 1.95 * st_dev/sqrt(nb),
+            upper = mean + 1.95 * st_dev/sqrt(nb)) %>%
+  ungroup() %>%
+  filter((hour >= 6 & hour <= 23) & nb > 5) %>% # we need at least 5 waiting times to reliably calculate conf int
+  left_join(file_to_ride) %>%
+  ggplot(aes(x = hour, y = mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(facets = vars(short_name),
+             nrow = 6) +
+  scale_x_continuous(breaks = seq(6, 24, 6)) +
+  ylab("Posted - actual waiting time (min)") +
+  xlab("Time of day")  +
+  scale_y_continuous(limits = c(-10, NA))
+```
 
 # Bibliography
