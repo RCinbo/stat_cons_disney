@@ -1,0 +1,22 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: Disney world waiting times
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Raïsa
+    family-names: Carmen
+    orcid: 'https://orcid.org/0000-0003-1025-8702'
+identifiers:
+  - type: url
+    value: 'https://github.com/RCinbo/stat_cons_disney'
+repository-code: 'https://github.com/RCinbo/stat_cons_disney'
+keywords:
+  - disney world
+  - waiting time
+  - mixed model
+license: MIT
