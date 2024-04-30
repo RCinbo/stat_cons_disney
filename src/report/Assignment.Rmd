@@ -1,0 +1,60 @@
+---
+documentclass: article
+fontsize: 10pt
+date: "`r Sys.Date()`"
+output: 
+  bookdown::pdf_document2: 
+    fig_caption: yes
+    toc: false
+    latex_engine: xelatex
+    includes:
+      in_header: preamble.sty
+      before_body: titlepage.sty
+bibliography: references.bib  
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE, appendix=TRUE}
+#---------------------------load all packages----------------------------------#
+library(tidyverse)
+library(rprojroot)
+library(kableExtra)
+library('nimble')
+library(coda)
+library(cowplot)
+library(latex2exp)
+library(stats)
+library(rjags)
+library(BEST)
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(
+  root.dir = find_root(criterion = has_file("stat_cons_disney.Rproj")))
+```
+
+\clearpage
+
+\appendix
+
+# Appendix
+
+## All code for the report
+
+\small
+
+```{r get-labels, echo = FALSE}
+#all code that needs to be in the appendix needs to have appendix = TRUE
+labs = knitr::all_labels(appendix == TRUE)
+labs = setdiff(labs, c("get-labels"))
+```
+
+```{r all-code, ref.label=labs, eval=FALSE}
+```
+
+```{=tex}
+\normalsize
+\clearpage
+```
+# Bibliography
