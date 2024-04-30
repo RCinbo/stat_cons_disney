@@ -1,6 +1,7 @@
 library(rprojroot)
 library(tidyverse)
 library(git2rdata)
+library(arrow) #to save 3million posted times to a parquet file.
 datafolder <- find_root_file("data",
                              criterion = has_file("stat_cons_disney.Rproj"))
 files <- list.files(
@@ -111,11 +112,14 @@ data_posted <- do.call(rbind, data_posted)
 write_vc(x = data,
          file = "waiting_times",
          root = datafolder,
-         sorting = c("file", "datetime", "SACTMIN"))
-write_vc(x = data,
-         file = "waiting_times",
-         root = datafolder,
-         sorting = c("file", "datetime", "SACTMIN"))
+         sorting = c("file", "datetime", "SACTMIN"))# 186k records
+# write_vc(x = data_posted,
+#          file = "waiting_times_posted",
+#          root = datafolder,
+#          sorting = c("file", "datetime", "SPOSTMIN")) #still 2.8million records
+write_parquet(data_posted,
+              paste0(datafolder, "/waiting_times_posted.parquet"))
+
 write_vc(file_to_ride,
          file = "file_to_ride",
          root = datafolder,
