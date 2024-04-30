@@ -4,7 +4,7 @@ fontsize: 10pt
 date: "`r Sys.Date()`"
 output: 
   bookdown::pdf_document2: 
-    fig_caption: yes
+    fig_caption: true
     toc: false
     latex_engine: xelatex
     includes:
@@ -21,18 +21,68 @@ editor_options:
 library(tidyverse)
 library(rprojroot)
 library(kableExtra)
-library('nimble')
-library(coda)
-library(cowplot)
-library(latex2exp)
-library(stats)
-library(rjags)
-library(BEST)
+library(git2rdata)
 
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 knitr::opts_knit$set(
   root.dir = find_root(criterion = has_file("stat_cons_disney.Rproj")))
+
+#----------------------------Load all necessary data---------------------------#
+waiting_times <- read_vc(file = "waiting_times",
+                         root = find_root_file("data",
+                                               criterion =
+                                                 has_file(
+                                                   "stat_cons_disney.Rproj"))) #SPOSTMIN:  Value -999 indicates the attraction was closed
+file_to_ride <- read_vc(file = "file_to_ride",
+                        root = find_root_file("data",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")))
 ```
+
+# Introduction
+
+This report investigates the accuracy of the posted waiting times for different Disneyworld attractions.
+More concrete, we will look at the difference between the posted waiting time when a customer start queueing and the actually realised waiting time.
+Although the waiting times for `r n_distinct(file_to_ride$file)` attractions are available, we will focus on `r n_distinct(file_to_ride %>% dplyr::filter(!is.na(code)) %>% dplyr::pull(file))` attractions for which metadata is available.
+Some attractions have more than one opening date.
+Since it is unclear whether this means that there is more than one attractions with the same name or whether it pertains to a renewal of the attraction, we assume the last opening date is the only relevant one.
+
+```{r}
+#filter the metadata to only keep attractions with metadata and only one row per file (keep last opening date):
+file_to_ride <- file_to_ride %>%
+  dplyr::filter(!is.na(code)) %>%
+  arrange(file, opened_on) %>%
+  group_by(file, short_name) %>%
+  slice_tail() %>%#keep only the last occurance
+  ungroup()
+```
+
+To work with the waiting times, some assumptions were made:
+
+1. The posted times are supposed to inform customers on the expected time that they will queue if they *start* queueing at any given time. This means that the prediction model that Disney world uses, tries to predict the time that a customer will have to wait **at the moment he starts queueing**.
+2. The posted times do not change between two registered posted times in the data.
+3. The actual waiting time of a customer is subtracted from the time when his waiting time was registered (assuming this is the time when he entered the ride) to know the time he started waiting. We then compare the posted waiting time at this calculated time with his actual waiting time.
+4. Very little actual waiting times are registered each day for each attraction \@ref(fig:nb-waiting-times-reg). We assume that the customers whose actual waiting time is registered are randomly selected.
+
+# Data exploration
+
+In total, we have `r nrow(waiting_times)` actual waiting times over all `r n_distinct(file_to_ride$file)` attractions, registered between `r min(waiting_times$date)` and `r max(waiting_times$date)`.
+Removing waiting times for which the posted waiting time was either missing or "-999" (meaning the ride was technically closed), `r sum(!is.na(waiting_times$posted_at_start_wait) &  waiting_times$posted_at_start_wait != -999)` waiting times remain.
+Additionally, there are some outliers in the realized waiting times.
+Removing all negative realized waiting times and waiting times larger than 360 minutes, `r sum(!is.na(waiting_times$posted_at_start_wait) &  waiting_times$posted_at_start_wait != -999 & waiting_times$SACTMIN >= 0 & waiting_times$SACTMIN <= 360)` waiting times remain.
+It should be noted that we don't have the same amount of waiting times for each attractions due to the fact that the time period of data collection \@ref(fig:date-collection) and the number of collected waiting times per day \@ref(fig:nb-waiting-times-reg) differs per attraction.
+
+```{r}
+#keep only waiting times with corresponding posted waiting time:
+waiting_times <- waiting_times %>%
+  dplyr::filter(!is.na(posted_at_start_wait) &  posted_at_start_wait != -999 &
+                  SACTMIN >= 0 & SACTMIN <= 360)
+```
+
+
+
+
 
 \clearpage
 
@@ -40,21 +90,60 @@ knitr::opts_knit$set(
 
 # Appendix
 
-## All code for the report
-
-\small
-
-```{r get-labels, echo = FALSE}
-#all code that needs to be in the appendix needs to have appendix = TRUE
-labs = knitr::all_labels(appendix == TRUE)
-labs = setdiff(labs, c("get-labels"))
+```{r nb-waiting-times-reg, fig.cap="Mean number of registered actual waiting times per day (and 95% conf. int.) for the different attractions.", fig.height = 4, fig.width = 8}
+ndays <- waiting_times %>%
+  group_by(file, date) %>%
+  summarize(n = n()) %>%
+  summarize(mean = mean(n),
+            st_dev = sd(n),
+            ndays = n()) %>%
+  mutate(lower = mean - 1.95 * st_dev/sqrt(ndays),
+         upper = mean + 1.95 * st_dev/sqrt(ndays)) %>%
+  ungroup() %>%
+  arrange(mean) %>%
+  left_join(file_to_ride)
+ndays %>%
+  ggplot(aes(x = file, y = mean, ymin = lower, ymax = upper,
+             color = land)) +
+  geom_pointrange(fatten = 2) +
+  scale_x_discrete(name = "Attraction", breaks = ndays$file, limits = ndays$file,
+                   labels = str_wrap(ndays$short_name, width = 15)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+        legend.text = element_text(size = 8),
+        legend.position = "bottom",
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-10,-10,-10,-10)) +
+  ylab("Nb registered actual waiting times per day")
 ```
 
-```{r all-code, ref.label=labs, eval=FALSE}
-```
+```{r date-collection, fig.cap="Period of data collection for each attraction. Color shows the total number of registered waiting times", fig.height = 4, fig.width = 8}
+start_end <- waiting_times %>%
+  mutate(date = ymd(as.Date(datetime))) %>%
+  group_by(file) %>%
+  summarize(ymin = min(date),
+            ymax = max(date),
+            nb = n()) %>%
+  ungroup() %>%
+  mutate(ymin = as.Date(ymin),
+         ymax = as.Date(ymax)) %>%
+   arrange(nb) %>%
+  left_join(file_to_ride)
+start_end %>%
+  ggplot(aes(x = file, ymin = ymin, ymax = ymax, color = nb)) +
+  geom_linerange(linewidth = 2)  +
+  scale_y_date(date_labels = "%m/%Y") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+        legend.text = element_text(size = 8),
+        legend.position = "bottom",
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-10,-10,0,-10)) +
+  scale_x_discrete(name = "Attraction", breaks = start_end$file,
+                   limits = start_end$file,
+                   labels = str_wrap(ndays$short_name, width = 15)) +
+  scale_color_gradientn("Nb waiting\n times",
+                        colours =
+                          c("lightyellow", "yellow", "orange", "darkred"))
 
-```{=tex}
-\normalsize
-\clearpage
-```
 # Bibliography
