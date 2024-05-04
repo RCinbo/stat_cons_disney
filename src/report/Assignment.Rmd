@@ -150,7 +150,7 @@ p2 <- sample %>%
                  alpha = 0.8) +
   geom_vline(aes(xintercept = 0), color = "black") +
   scale_y_continuous(labels = scales::percent) +
-  ylab("Percentage of waiting times") +
+  ylab("Percentage of observations") +
   xlab("Posted - actual waiting time (min)") +
   theme_bw()
 
@@ -283,7 +283,7 @@ It should be noted that, since this metadata is not available for all dates and 
 
 # Methodology and Results
 
-A linear regression is fit to predict the difference between the posted and actual waiting time ($Y$) based on the covariates in Table \@ref(tab:covariates). A Bayesian model is fit in R, using the *brms* package [@burkner2017brms]. To account for the fact that waiting times originate from `r waiting_times_reg[complete.cases(waiting_times_reg),] %>% dplyr::pull(short_name) %>% n_distinct()` attractions, a random intercept is added for the attractions [@RJ-2018-017].
+A linear regression is fit to predict the difference between the posted and actual waiting time ($Y$) based on the covariates in Table \@ref(tab:covariates). A Bayesian model is fit in R, using the *brms* package [@burkner2017brms]. To account for the fact that waiting times originate from `r waiting_times_reg[complete.cases(waiting_times_reg),] %>% dplyr::pull(short_name) %>% n_distinct()` attractions, a random intercept is added for the attractions [@burkner2017advanced].
 
 ```{r}
 #Maybe use multiple imputation to predict at least the daily variables??
@@ -318,6 +318,15 @@ burnin <- niter / 4 # number of initial samples to remove (= burn-in)
 nparallel <- nchains # number of cores for parallel computing
 thinning <- 1 #
 s <- summary(mod, prob = 0.90)
+#pred <- predict(mod)
+#save(pred, file = find_root_file("data", "prediction.Rdata",
+                                     # criterion =
+                                     #   has_file(
+                                     #     "stat_cons_disney.Rproj")))
+load(file = find_root_file("data", "prediction.Rdata",
+                                     criterion =
+                                       has_file(
+                                         "stat_cons_disney.Rproj")))
 ```
 
 ```{r eval = FALSE}
@@ -366,7 +375,9 @@ plot(test)
 s <- summary(mod, prob = 0.90)
 ```
 
-Figure \@ref(fig:fixed) shows the estimated coefficients with confidence intervals. As was already evident from the data analysis (Section \@ref(waiting-times) and Appendix \@ref(difference-between-the-actual-and-posted-waiting-times-per-attraction)), the estimated intercept is positive, meaning waiting time tends to be overestimated. However, the variance in the intercept is large so the intercept is not significantly positive at a 90% confidence interval.
+As was already evident from the data analysis (Section \@ref(waiting-times) and Appendix \@ref(difference-between-the-actual-and-posted-waiting-times-per-attraction)), the waiting time tends to be overestimated. This is confirmed by the posterior predictive distribution of $Y$ (Figure \@ref(fig:ppd) in the appendix). 
+
+Figure \@ref(fig:fixed) shows the estimated coefficients with confidence intervals. 
 
 Waiting times are overestimated significantly more if (*covariate* estimate [lower 90% CI, upper 90% CI]):
 
@@ -610,7 +621,7 @@ waiting_times %>%
              aes(x = 75, y = 0.6, label = perc)) +
   scale_y_continuous(labels = scales::percent) +
   facet_wrap(vars(short_name), nrow = 6) +
-  ylab("Percentage of waiting times") +
+  ylab("Percentage of observations") +
   xlab("Posted - actual waiting time (min)") +
   xlim(c(-100, 100)) +
   theme_bw()
@@ -675,7 +686,7 @@ waiting_times %>%
 
 To fit a Bayesian model, information on the distribution is obtained by sampling using the "Markov Chain Monte Carlo" (MCMC) method. When using this method, it is important to check MCMC convergence.
 
-Our MCMC was run with `r nchains` chains with `r niter` iterations each. The burn-in period is `r niter / 4` iterations. Visually, the trace plots showed good mixing and convergence (Figure \@ref(fig:trace)), as do the posterior density plots (Figure \@ref(fig:pdp)). The Gelman-Rubin diagnostics show that all $\hat{R}$ (R-hats) are close to 1 (Figure \@ref(fig:rhat)). Lastly, the effective sample size seems to be large enough for most parameters (Figure \@ref(fig:neff)). Although it could be better for the *category_code* covariate. We can therefore conclude that convergence is sufficient.
+Our MCMC was run with `r nchains` chains with `r niter` iterations each. The burn-in period is `r niter / 4` iterations. The default, flat priors were used for all parameter estimates. Visually, the trace plots showed good mixing and convergence (Figure \@ref(fig:trace)), as do the posterior density plots (Figure \@ref(fig:pdp)). The Gelman-Rubin diagnostics show that all $\hat{R}$ (R-hats) are close to 1 (Figure \@ref(fig:rhat)). Lastly, the effective sample size seems to be large enough for most parameters (Figure \@ref(fig:neff)). Although it could be better for the *category_code* covariate. We can therefore conclude that convergence is sufficient.
 
 ```{r trace, fig.cap = "Trace plots for each of the parameters. The colors show the different chains.", warning = FALSE, message = FALSE, fig.width = 8, fig.height = 12}
 s <- summary(mod)
@@ -732,6 +743,32 @@ for (x in seq_len(nrow(covariates))) {
                      covariates[x, "label"])
 }
 p
+```
+
+To check model fit, the posterior predictive distribution is compared to the actual distribution of the difference between the posted and actual waiting time. While the fit is not entirely bad (the estimated mean and median (`r round(mean(pred[,1]), 3)` and `r round(median(pred[,1]), 3)`), are close to the true mean and median, (`r round(mean(waiting_times_reg$diff), 3)` and `r round(median(waiting_times_reg$diff), 3)`)), the model does not quite succeed in capturing the true variance in $Y$. 
+
+
+```{r ppd, fig.cap = "Posterior predictive distribution (PPD) for the difference between posted and actual waiting times. The colored histogram shows the raw data while the black outlines show the histogram for the PPD."}
+bin_width <- 5
+nbins = 70#ceiling((max(waiting_times_reg$diff) - min(waiting_times_reg$diff))/bin_width)
+colfunc <- colorRampPalette(c("yellow", "orange", "red", "darkred"))
+p2 <- sample %>%
+  ggplot() +
+  geom_histogram(aes(x = diff, y = after_stat(count / sum(count))),
+                 binwidth = bin_width,
+                 fill = colfunc(nbins),
+                 alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage of observations") +
+  xlab("Posted - actual waiting time (min)") +
+  theme_bw() +
+  geom_histogram(data = as.data.frame(pred),
+                 aes(x = Estimate, y = after_stat(count / sum(count))),
+                 binwidth = bin_width,
+                 fill = colfunc(nbins),
+                 alpha = 0,
+                 color = "black") 
+p2
 ```
 
 \clearpage
