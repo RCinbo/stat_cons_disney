@@ -18,11 +18,26 @@ editor_options:
 
 ```{r setup, include=FALSE, message=FALSE, warning=FALSE, appendix=TRUE}
 #---------------------------load all packages----------------------------------#
-library(tidyverse)
-library(rprojroot)
-library(kableExtra)
-library(git2rdata)
-library(patchwork)
+library(tidyverse) # data wrangling and visualisation
+library(rprojroot) # relative file paths
+library(kableExtra)# tables in markdown
+library(git2rdata) # clean, git-friendly datasets
+library(patchwork) # combining several plots into one
+library(brms)      # fitting Bayesian models
+library(bayesplot) # visualise MCMC and posterior predictive checks
+library(tidybayes) # wrangling and visualising Bayesian models
+
+# Conflicts between packages
+conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::lag)
+conflicted::conflicts_prefer(brms::ar)
+conflicted::conflicts_prefer(brms::dstudent_t)
+conflicted::conflicts_prefer(brms::pstudent_t)
+conflicted::conflicts_prefer(brms::qstudent_t)
+conflicted::conflicts_prefer(brms::rstudent_t)
+conflicted::conflicts_prefer(dplyr::pull)
+conflicted::conflicts_prefer(dplyr::group_rows)
+conflicted::conflict_prefer("rhat", "brms")
 
 knitr::opts_chunk$set(echo = FALSE, message = FALSE)
 knitr::opts_knit$set(
@@ -39,15 +54,25 @@ file_to_ride <- read_vc(file = "file_to_ride",
                                               criterion =
                                                 has_file(
                                                   "stat_cons_disney.Rproj")))
+entities_extra <- read_csv(find_root_file("data", "entities_extra.csv",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")))
+metadata <- read_csv(find_root_file("data", "metadata.csv",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")))
 ```
 
 # Introduction
 
-This report investigates the accuracy of the posted waiting times for different Disneyworld attractions. For transparency, all source code for this report and the data analysis can be found a github repository [@Carmen_Disney_world_waiting].
+This report investigates the accuracy of the posted waiting times for different Disneyworld attractions. 
 More concrete, we will look at the difference between the posted waiting time when a customer start queueing and the actually realised waiting time.
+For transparency, all source code for this report and the data analysis can be found in a github repository [@Carmen_Disney_world_waiting].
+
 Although the waiting times for `r n_distinct(file_to_ride$file)` attractions are available, we will focus on `r n_distinct(file_to_ride %>% dplyr::filter(!is.na(code)) %>% dplyr::pull(file))` attractions for which metadata is available.
 Some attractions have more than one opening date.
-Since it is unclear whether this means that there is more than one attractions with the same name or whether it pertains to a renewal of the attraction, we assume the last opening date is the only relevant one.
+Since it is unclear whether this means that there is more than one attractions with the same name or whether it pertains to a renewal of the attraction, we assume the latter, meaning the last opening date is the only relevant one.
 
 ```{r}
 #filter the metadata to only keep attractions with metadata and only one row per file (keep last opening date):
@@ -64,15 +89,17 @@ To work with the waiting times, some assumptions were made:
 1. The posted times are supposed to inform customers on the expected time that they will queue if they *start* queueing at any given time. This means that the prediction model that Disney world uses, tries to predict the time that a customer will have to wait **at the moment he starts queueing**.
 2. The posted times do not change between two registered posted times in the data.
 3. The actual waiting time of a customer is subtracted from the time when his waiting time was registered (assuming this is the time when he entered the ride) to know the time he started waiting. We then compare the posted waiting time at this calculated time with his actual waiting time.
-4. Very little actual waiting times are registered each day for each attraction \@ref(fig:nb-waiting-times-reg). We assume that the customers whose actual waiting time is registered are randomly selected.
+4. Very little actual waiting times are registered each day for each attraction (Figure  \@ref(fig:nb-waiting-times-reg)). We assume that the customers whose actual waiting time is registered are randomly selected.
 
 # Data exploration
 
-In total, we have `r nrow(waiting_times)` actual waiting times over all `r n_distinct(file_to_ride$file)` attractions, registered between `r min(waiting_times$date)` and `r max(waiting_times$date)`.
-Removing waiting times for which the posted waiting time was either missing or "-999" (meaning the ride was technically closed), `r sum(!is.na(waiting_times$posted_at_start_wait) &  waiting_times$posted_at_start_wait != -999)` waiting times remain.
+## Waiting times
+
+In total, we have `r nrow(waiting_times)` actual waiting times over all `r n_distinct(file_to_ride$file)` attractions, registered between `r as.Date(min(waiting_times$datetime))` and `r as.Date(max(waiting_times$datetime))`.
+Removing waiting times for which the posted waiting time was either missing or "-999" (meaning the ride was closed), `r sum(!is.na(waiting_times$posted_at_start_wait) &  waiting_times$posted_at_start_wait != -999)` waiting times remain.
 Additionally, there are some outliers in the realized waiting times.
-Removing all negative realized waiting times and waiting times larger than 360 minutes, `r sum(!is.na(waiting_times$posted_at_start_wait) &  waiting_times$posted_at_start_wait != -999 & waiting_times$SACTMIN >= 0 & waiting_times$SACTMIN <= 360)` waiting times remain.
-It should be noted that we don't have the same amount of waiting times for each attractions due to the fact that the time period of data collection \@ref(fig:date-collection) and the number of collected waiting times per day \@ref(fig:nb-waiting-times-reg) differs per attraction.
+Removing all negative waiting times and waiting times larger than 360 minutes, `r sum(!is.na(waiting_times$posted_at_start_wait) &  waiting_times$posted_at_start_wait != -999 & waiting_times$SACTMIN >= 0 & waiting_times$SACTMIN <= 360)` waiting times remain.
+It should be noted that we don't have the same amount of waiting times for each attractions due to the fact that the time period of data collection (Figure \@ref(fig:date-collection)) and the number of collected waiting times per day (Figure \@ref(fig:nb-waiting-times-reg)) differs per attraction.
 
 ```{r}
 #keep only waiting times with corresponding posted waiting time:
@@ -91,8 +118,8 @@ In the top left figure, the posted waiting time overestimated the actual waiting
 The color corresponds to the difference between the posted and actual waiting time.
 The top right figure also clearly shows that it is more likely that the actual waiting time is overestimated than underestimated (it is overestimated in approximately `r round(100*sum(sample$diff>0) / nrow(sample))`% of cases)).
 It is likely that this tendency to overestimate the waiting time is a tactical choice since it has been proven that people generally get more agitated if they need to wait longer than expected.
-Since the proposed waiting time will strongly influence the expected waiting times, it makes sense to overestimate rather than to underestimate the waiting time (see for instance @maister1984psychology and @chu2019psychology).
-Th bottom figures show the mean and 95% confidence interval of the actual waiting time (left) and the difference between the proposed and actual waiting time (right) over the day, depending on when the client started to wait.
+Since the posted waiting time will strongly influence the expected waiting times, it makes sense to overestimate rather than to underestimate the waiting time (see for instance @maister1984psychology and @chu2019psychology).
+The bottom figures shows the mean and 95% confidence interval of the actual waiting time (left) and the difference between the posted and actual waiting time (right) over the day, depending on when the client started to wait.
 In the appendix, each of these figures are shown for each of the attractions separately (Figure \@ref(fig:waiting-exploration-app1) to \@ref(fig:waiting-exploration-app4)).
 
 ```{r waiting-exploration, fig.cap = "Exploration of actual and posted waiting time and the difference between both."}
@@ -145,7 +172,7 @@ p4 <- waiting_times %>%
   geom_line() +
   theme_bw() +
   scale_x_continuous(breaks = seq(6, 23, 3)) +
-  ylab("Proposed - actual waiting time (min)") +
+  ylab("Posted - actual waiting time (min)") +
   xlab("Time of day")
 p3 <- waiting_times %>%
   mutate(
@@ -172,7 +199,194 @@ p3 <- waiting_times %>%
 p1 + p2 + p3 + p4
 ```
 
+## Metadata
 
+In addition to the waiting times, the source files contains a rich dataset with metadata on both the attractions and seasonal aspects.
+We will select the variables in Table \@ref(tab:covariates) as possible covariates in our data.
+This selection of covariates is based on expert opinion, taking care not to include highly correlated variables.
+
+```{r covariates}
+waiting_times_reg <- waiting_times %>%
+  left_join(metadata %>%
+              dplyr::select(DATE, DAYOFWEEK, YEAR, HOLIDAYPX, WDW_TICKET_SEASON,
+                            WDWMEANTEMP, inSession, MKPRDDAY,
+                            CapacityLostWGT_MK, CapacityLostWGT_AK,
+                            CapacityLostWGT_EP, CapacityLostWGT_HS) %>%
+              mutate(WDW_TICKET_SEASON = ifelse(is.na(WDW_TICKET_SEASON),
+                                                "regular", WDW_TICKET_SEASON)),#assume NA = "regular"-> should adjust this in metadata before join (NA here then means that date wasn't available in the metadata file)
+            by = join_by(date == DATE)) %>%
+  left_join(file_to_ride %>%
+              dplyr::select(file, short_name, land),
+            by = join_by(file == file)) %>%
+  left_join(entities_extra %>%
+              dplyr::select(short_name, duration,
+                            scope_and_scale_code),
+            by = join_by(short_name == short_name)) %>%
+  mutate(start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+         hour = hour(start_wait),
+         mins = minute(start_wait),
+         tod = hour + mins/60,
+         inSession = as.numeric(str_remove(inSession, "%")),
+         DAYOFWEEK = as.factor(DAYOFWEEK),
+         YEAR = as.factor(YEAR),
+         WDW_TICKET_SEASON = as.factor(WDW_TICKET_SEASON),
+         scope_and_scale_code = as.factor(scope_and_scale_code)
+         ) %>%
+  #dplyr::select(-hour, -mins) %>%
+  mutate(CapacityLostWGT_AK = scale(CapacityLostWGT_AK, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT_MK = scale(CapacityLostWGT_MK, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT_EP = scale(CapacityLostWGT_EP, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT_HS = scale(CapacityLostWGT_HS, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT = (CapacityLostWGT_AK + CapacityLostWGT_MK +
+                              CapacityLostWGT_EP + CapacityLostWGT_HS)/4,
+         tod2 = tod * tod, #time of day squared
+         land = as.factor(land),
+         short_name = as.factor(short_name),
+         weekend = 1*(DAYOFWEEK %in% c("6", "7")))
+covariates <- data.frame(
+  covariate = c("weekend", "HOLIDAYPX", "WDW_TICKET_SEASON", 
+                "WDWMEANTEMP", "inSession", "MKPRDDAY", "CapacityLostWGT", 
+                "duration", "scope_and_scale_code", "tod", "tod2"),
+  label = c("weekend", "holidayPX", "ticket_season", 
+            "mean_temp", "schools", "nb_parades", "capacity_lost", 
+            "duration", "scope_and_scale_code", "tod", "tod2"),
+  expl = c("Whether it is a weekend date (1) or not (0). Day of the week was also
+           tested in the model exploration phase.",
+           "Proximity to Holiday (2-directional) (in days)",
+           "Walt Disney World Single Day Price Type (peak, regular, or value)",
+           "Average temperature this day",
+           "The percentage of schools in session",
+           "Number of Daytime Parades at Magic Kingdom",
+           "Total hourly capacity lost on that park day, weighted by attraction popularity. This covariate is centered and normalized.",
+           "Duration of attraction in minutes",
+           "The type of attraction (headliner, major_attraction, minor_attraction, or  super_headliner",
+           "Time of day (in hours)",
+           "Time of day, squared"),
+  type = c("binary", "numeric", "discrete", "numeric", "numeric", "numeric",
+           "numeric", "numeric", "discrete", "numeric", "numeric"))
+covariates %>%
+  dplyr::select(label, type, expl) %>%
+  kable(colnames = c("Covariate", "Type", "Explanation"),
+        caption = "Overview of all covariates.",
+        format = "latex",
+        booktabs = TRUE) %>%
+  kableExtra::kable_styling(latex_options = "scale_down")
+```
+
+It should be noted that, since this metadata is not available for all dates and attractions, out dataset  is reduced to `r waiting_times_reg[complete.cases(waiting_times_reg),] %>% nrow()` waiting times for `r waiting_times_reg[complete.cases(waiting_times_reg),] %>% dplyr::pull(short_name) %>% n_distinct()`attractions in `r waiting_times_reg[complete.cases(waiting_times_reg),] %>% dplyr::pull(land) %>% n_distinct()` lands.
+
+# Methodology and Results
+
+We will fit a Bayesian model to predict the difference between the posted and actual waiting time ($Y$) based on the covariates in Table \@ref(tab:covariates) in R, using the *brms* package [@burkner2017brms]. To account for the fact the waiting times originate from `r n_distinct(file_to_ride$short_name)` attractions, we add a  random intercept for the attractions [@RJ-2018-017].
+
+```{r}
+#Maybe use multiple imputation to predict at least the daily variables??
+# https://cran.r-project.org/web/packages/brms/vignettes/brms_missings.html
+
+waiting_times_reg <- waiting_times_reg[complete.cases(waiting_times_reg),]
+  
+# correlation_matrix <- cor(waiting_times_reg %>%
+#                             dplyr::select(where(is.numeric)))
+# library(corrplot)
+# corrplot(correlation_matrix, type = "upper", order = "hclust",
+#          tl.col = "black", tl.srt = 45)
+
+```
+
+
+
+Before drawing any conclusions from the model results, MCMC convergence is checked in section \@ref(model-convergence) in the appendix.
+Convergence is good and so Figures \@ref(fig:fixed) and \@ref(fig:random) show the results for the fixed and random effects respectively.
+As the dependent variable, $Y$, is equal to difference between the posted and actual waiting time:
+
+- Positive $Y$ means that the posted waiting time exceeds the actual waiting time. Positive coefficients therefore imply that the covariate will lead to a higher tendency to overestimate the actual waiting time.
+- Negative $Y$ means that the posted waiting time is lower than the actual waiting time. Negative coefficients therefore imply that the covariate will lead to a higher tendency to underestimate the actual waiting time.
+
+```{r eval = TRUE}
+mod <- readRDS(file = find_root_file("data", "model.rds",
+                                     criterion =
+                                       has_file(
+                                         "stat_cons_disney.Rproj")))
+# Set MCMC parameters
+nchains <- 3 # number of chains
+niter <- 2000 # number of iterations (incl. burn-in, see next)
+burnin <- niter / 4 # number of initial samples to remove (= burn-in)
+nparallel <- nchains # number of cores for parallel computing
+thinning <- 1 #
+```
+
+```{r eval = FALSE}
+#https://biol609.github.io/lectures/23c_brms_prediction.html#32_fixed_and_random_effects
+# library(glmmTMB)
+test <- glmmTMB(diff ~ DAYOFWEEK + HOLIDAYPX + WDW_TICKET_SEASON +
+                  WDWMEANTEMP + inSession + MKPRDDAY + category_code +
+                  duration + scope_and_scale_code + tod +
+                  CapacityLostWGT + (1|short_name),
+                data = waiting_times_reg,
+                family = gaussian())
+#Model convergence problem; non-positive-definite Hessian matrix
+# Set MCMC parameters
+nchains <- 3 # number of chains
+niter <- 2000 # number of iterations (incl. burn-in, see next)
+burnin <- niter / 4 # number of initial samples to remove (= burn-in)
+nparallel <- nchains # number of cores for parallel computing
+thinning <- 1 #
+
+# test <- brm(diff ~ DAYOFWEEK + YEAR + HOLIDAYPX + WDW_TICKET_SEASON +
+#                   WDWMEANTEMP + inSession + MKPRDDAY + category_code +
+#                   duration + scope_and_scale_code + tod + tod2 + tod3 +
+#                   CapacityLostWGT + (1|land/short_name),
+#             data = waiting_times_reg,
+#             family = gaussian)
+mod2 <- brm(diff ~ weekend + HOLIDAYPX + WDW_TICKET_SEASON +
+                  WDWMEANTEMP + inSession + MKPRDDAY + duration +
+              scope_and_scale_code + tod + tod2 +
+              CapacityLostWGT + (1|short_name),
+            data = waiting_times_reg,
+            family = gaussian(),
+            chains = nchains,            # MCMC parameters
+            warmup = burnin, 
+            iter = niter,
+            cores = nparallel,
+            thin = thinning,
+            seed = 123,
+            file = find_root_file("data", "model6",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")),
+            file_refit = "on_change")#to make it faster
+
+summary(test)
+plot(test)
+sd_mean <- test %>%
+  spread_draws(sd_short_name__Intercept, ndraws = 1000, seed = 123) %>%
+  summarise(mean_sd = mean(sd_short_name__Intercept)) %>%
+  pull()
+
+# Neem random effects en plot
+test %>%
+  spread_draws(r_short_name[short_name,], ndraws = 1000, seed = 123) %>%
+  ungroup() %>%
+  mutate(short_name = reorder(short_name, r_short_name)) %>%
+  ggplot(aes(x = r_short_name, y = short_name)) +
+    geom_vline(xintercept = 0, color = "darkgrey", linewidth = 1) +
+    geom_vline(xintercept = c(sd_mean * qnorm(0.05), sd_mean * qnorm(0.95)),
+               color = "darkgrey", linetype = 2) +
+    stat_halfeye(point_interval = "median_qi", .width = 0.9, size = 2/3,
+                 fill = "cornflowerblue")
+
+```
+
+
+
+# Discussion
+
+Currently, covariates were selected based on expert opinion, making sure not to include highly correlated variables. 
+For future research, it would be valuable to include additional covariates, even if they are highly correlated, and use variable selection techniques such as LASSO and Elastic Net (see for instance @ariyo2020bayesian). 
 
 \clearpage
 
@@ -206,7 +420,7 @@ ndays %>%
         legend.position = "bottom",
         legend.margin = margin(0,0,0,0),
         legend.box.margin = margin(-10,-10,-10,-10)) +
-  ylab("Nb registered actual waiting times per day")
+  ylab("Nb actual waiting times per day")
 ```
 
 ```{r date-collection, fig.cap="Period of data collection for each attraction. Color shows the total number of registered waiting times", fig.height = 4, fig.width = 8}
@@ -239,6 +453,7 @@ start_end %>%
                           c("yellow", "orange", "darkred"))
 
 ```
+\clearpage
 
 ## Difference between the actual and posted waiting times per attraction
 
@@ -366,5 +581,43 @@ waiting_times %>%
   xlab("Time of day")  +
   scale_y_continuous(limits = c(-10, NA))
 ```
+
+\clearpage
+
+## Model convergence
+
+To fit a Bayesian model, we get information on the distribution by sampling from it using the "Markov Chain Monte Carlo" (MCMC) method. When using this method, it is very important to check MCMC convergence.
+
+Our MCMC was run with `r nchains` chains with `r niter` iterations each. The burnin period is `r niter / 4` iterations. Visually, the trace plots showed good mixing and convergence (Figure \@ref(fig:trace)), as do the posterior density plots (Figure \@ref(fig:pdp). The Gelman-Rubin diagnostics show that all $\hat{R}$ (R-hats) are close to 1 (Figure \@ref(fig:rhat)). Lastly, the effective sample size seems to be large enough for most parameters (Figure \@ref(fig:neff)). Although it could be better for the *category_code* covariate.
+
+```{r trace, fig.cap = "Trace plots for each of the parameters. The colors show the different chains.", warning = FALSE, message = FALSE, fig.width = 8, fig.height = 12}
+s <- summary(mod)
+parameters <- c(paste0("b_", rownames(s$fixed)), "sigma")
+as_draws_df(mod, variable = parameters) %>%
+  # long format
+  pivot_longer(cols = all_of(parameters), names_to = "parameter",
+               values_to = "value") %>%
+  # visualise with ggplot()
+  ggplot(aes(y = value, x = .iteration, colour = factor(.chain))) +
+    geom_line(alpha = 0.8) +
+    facet_wrap(~parameter, ncol = 3, scales = "free") +
+  theme_bw() +
+  scale_color_discrete("")
+```
+
+```{r pdp, fig.cap = "Posterior density plot for each of the parameters.", warning = FALSE, message = FALSE, fig.width = 8, fig.height = 12}
+mcmc_dens_overlay(mod, pars = parameters)
+
+```
+
+```{r rhat, fig.cap = "Gelman-Rubin diagnostics.", warning = FALSE, message = FALSE}
+mcmc_rhat(rhat(mod)[parameters]) + yaxis_text(hjust = 1)
+```
+
+```{r neff, fig.cap = "Ratio of effective sample size and the number of iterations.", warning = FALSE, message = FALSE}
+mcmc_neff(neff_ratio(mod)[parameters]) + yaxis_text(hjust = 1)
+```
+
+\clearpage
 
 # Bibliography
