@@ -1,0 +1,409 @@
+---
+title: "Statistical consulting: Disney World case"
+author: "Raïsa Carmen"
+date: "`r Sys.Date()`"
+tables: true
+graphics: yes
+output:
+  beamer_presentation:
+    theme: "Hannover"
+    colortheme: "seahorse"
+    fonttheme: "professionalfonts"
+    toc: TRUE
+    slide_level: 2
+    keep_tex: true
+    includes:
+header-includes: |
+  \usepackage{etoolbox}
+
+  \defbeamertemplate{background canvas}{mydefault}{%
+    \includegraphics[scale = 0.1, trim=-106.7cm 0 0 -79.6cm]{disney-channel-the-walt-disney-company-toon-disney-clip-art-grey-wallpaper.jpg}
+  }
+  \defbeamertemplate{background canvas}{standout}{%
+    
+  }
+
+  \BeforeBeginEnvironment{frame}{%
+    \setbeamertemplate{background canvas}[mydefault]%
+  }
+
+  \makeatletter
+  \define@key{beamerframe}{standout}[true]{%
+    \setbeamertemplate{background canvas}[standout]%
+  }
+  \makeatother
+---
+
+```{r setup, include=FALSE}
+# choose a beamer theme, font and color
+# https://deic.uab.cat/~iblanes/beamer_gallery/
+# beamer : markdown
+# https://bookdown.org/yihui/rmarkdown/beamer-presentation.html
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r loaddata, include=FALSE, message=FALSE, warning=FALSE, appendix=TRUE}
+#---------------------------load all packages----------------------------------#
+library(tidyverse) # data wrangling and visualisation
+library(rprojroot) # relative file paths
+library(kableExtra)# tables in markdown
+library(git2rdata) # clean, git-friendly datasets
+library(patchwork) # combining several plots into one
+library(brms)      # fitting Bayesian models
+library(bayesplot) # visualise MCMC and posterior predictive checks
+library(tidybayes) # wrangling and visualising Bayesian models
+
+# Conflicts between packages
+conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::lag)
+conflicted::conflicts_prefer(brms::ar)
+conflicted::conflicts_prefer(brms::dstudent_t)
+conflicted::conflicts_prefer(brms::pstudent_t)
+conflicted::conflicts_prefer(brms::qstudent_t)
+conflicted::conflicts_prefer(brms::rstudent_t)
+conflicted::conflicts_prefer(dplyr::pull)
+conflicted::conflicts_prefer(dplyr::group_rows)
+conflicted::conflict_prefer("rhat", "brms")
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+knitr::opts_knit$set(
+  root.dir = find_root(criterion = has_file("stat_cons_disney.Rproj")))
+
+#----------------------------Load all necessary data---------------------------#
+waiting_times <- read_vc(file = "waiting_times",
+                         root = find_root_file("data",
+                                               criterion =
+                                                 has_file(
+                                                   "stat_cons_disney.Rproj"))) #SPOSTMIN:  Value -999 indicates the attraction was closed
+file_to_ride <- read_vc(file = "file_to_ride",
+                        root = find_root_file("data",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")))
+entities_extra <- read_csv(find_root_file("data", "entities_extra.csv",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")))
+metadata <- read_csv(find_root_file("data", "metadata.csv",
+                                              criterion =
+                                                has_file(
+                                                  "stat_cons_disney.Rproj")))
+file_to_ride <- file_to_ride %>%
+  dplyr::filter(!is.na(code)) %>%
+  arrange(file, opened_on) %>%
+  group_by(file, short_name) %>%
+  slice_tail() %>%#keep only the last occurance
+  ungroup()
+#keep only waiting times with corresponding posted waiting time:
+waiting_times <- waiting_times %>%
+  dplyr::filter(!is.na(posted_at_start_wait) &  posted_at_start_wait != -999 &
+                  SACTMIN >= 0 & SACTMIN <= 360) %>%
+  mutate(diff = posted_at_start_wait - SACTMIN)
+set.seed(2024)
+sample <- waiting_times %>%
+  slice_sample(n = 10000)
+```
+
+# Introduction
+
+- Waiting times for different attractions in Disney World
+  - posted waiting times
+  - actual waiting times
+- Metadata
+  - on the attractions
+  - on each of the days
+
+
+
+## Research questions
+
+- How much does the posted waiting time differ from the actual waiting time?
+- What influences the accuracy of the posted waiting times?
+- How does the accuracy of the posted waiting times differ between attractions? 
+
+
+## Assumptions
+
+```{r echo= FALSE, include=TRUE}
+datafolder <- find_root_file("data",
+                             criterion = has_file("stat_cons_disney.Rproj"))
+data_wait_7dwarfs <- read.csv(file = paste0(datafolder,
+                                                "/waiting times/",
+                                                "7_dwarfs_train.csv")) %>%
+  dplyr::select(datetime, SACTMIN, SPOSTMIN)
+data_wait_7dwarfs[255:265,] %>%
+  kable(format = "latex", row.names = FALSE) %>%
+  kableExtra::kable_styling(font_size = 9)
+
+waiting_times %>%
+  dplyr::select(datetime, SACTMIN, posted_at_start_wait) -> t
+t[2,] %>%
+  kable(format = "latex", row.names = FALSE) %>%
+  kableExtra::kable_styling(font_size = 9)
+```
+
+# Data exploration
+
+## Waiting times 
+
+
+```{r}
+p1 <- sample %>%
+  ggplot() +
+  geom_line(data = data.frame(x = c(0, max(sample$SACTMIN)),
+                              y = c(0,max(sample$posted_at_start_wait))),
+            aes(x = x, y = y)) +
+  geom_point(aes(x = SACTMIN, y = posted_at_start_wait, color = diff),
+             alpha = 0.5) +
+  scale_color_gradientn("Difference",
+                        colours =
+                          c("yellow", "orange", "red", "darkred")) +
+  xlab("Actual waiting time (min)") +
+  ylab("Posted waiting time (min)") +
+  guides(colour = "none") +
+  theme_bw()
+
+bin_width <- 10
+nbins = ceiling((max(sample$diff) - min(sample$diff))/bin_width)
+colfunc <- colorRampPalette(c("yellow", "orange", "red", "darkred"))
+
+p2 <- sample %>%
+  ggplot() +
+  geom_histogram(aes(x = diff, y = after_stat(count / sum(count))),
+                 binwidth = bin_width,
+                 fill = colfunc(nbins),
+                 alpha = 0.8) +
+  geom_vline(aes(xintercept = 0), color = "black") +
+  scale_y_continuous(labels = scales::percent) +
+  ylab("Percentage of observations") +
+  xlab("Posted - actual waiting time (min)") +
+  theme_bw()
+
+p4 <- waiting_times %>%
+  mutate(
+    start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+    hour = hour(start_wait)) %>%
+  group_by(hour) %>%
+  summarize(mean = mean(diff),
+            st_dev = sd(diff),
+            nb = n(),
+            lower = mean - 1.95 * st_dev/sqrt(nb),
+            upper = mean + 1.95 * st_dev/sqrt(nb)) %>%
+  ungroup() %>%
+  filter(hour >= 6 & hour <= 23) %>%
+  ggplot(aes(x = hour, y = mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line() +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(6, 23, 3)) +
+  ylab("Posted - actual waiting time (min)") +
+  xlab("Time of day (hour)")
+p3 <- waiting_times %>%
+  mutate(
+    start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+    hour = hour(start_wait)) %>%
+  group_by(hour) %>%
+  summarize(mean = mean(SACTMIN),
+            st_dev = sd(SACTMIN),
+            nb = n(),
+            lower = mean - 1.95 * st_dev/sqrt(nb),
+            upper = mean + 1.95 * st_dev/sqrt(nb)) %>%
+  ungroup() %>%
+  filter(hour >= 6 & hour <= 23) %>%
+  ggplot(aes(x = hour, y = mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.5) +
+  geom_line() +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(6, 23, 3)) +
+  ylab("Actual waiting time (min)") +
+  xlab("Time of day (hour)")
+
+
+p1 + p2 + p3 + p4
+
+```
+
+
+# Methodology and results
+
+## Model
+
+Linear, Bayesian model to predict the difference between the posted and actual waiting time.
+
+```{r covariates}
+waiting_times_reg <- waiting_times %>%
+  left_join(metadata %>%
+              dplyr::select(DATE, DAYOFWEEK, YEAR, HOLIDAYPX, WDW_TICKET_SEASON,
+                            WDWMEANTEMP, inSession, MKPRDDAY,
+                            CapacityLostWGT_MK, CapacityLostWGT_AK,
+                            CapacityLostWGT_EP, CapacityLostWGT_HS) %>%
+              mutate(WDW_TICKET_SEASON = ifelse(is.na(WDW_TICKET_SEASON),
+                                                "regular", WDW_TICKET_SEASON)),#assume NA = "regular"-> should adjust this in metadata before join (NA here then means that date wasn't available in the metadata file)
+            by = join_by(date == DATE)) %>%
+  left_join(file_to_ride %>%
+              dplyr::select(file, short_name, land),
+            by = join_by(file == file)) %>%
+  left_join(entities_extra %>%
+              dplyr::select(short_name, duration, category_code,
+                            scope_and_scale_code),
+            by = join_by(short_name == short_name)) %>%
+  mutate(start_wait = datetime - as.difftime(SACTMIN, units = "mins"),
+         hour = hour(start_wait),
+         mins = minute(start_wait),
+         tod = hour + mins/60,
+         inSession = as.numeric(str_remove(inSession, "%")),
+         DAYOFWEEK = as.factor(DAYOFWEEK),
+         YEAR = as.factor(YEAR),
+         WDW_TICKET_SEASON = as.factor(WDW_TICKET_SEASON),
+         scope_and_scale_code = as.factor(scope_and_scale_code)
+         ) %>%
+  #dplyr::select(-hour, -mins) %>%
+  mutate(CapacityLostWGT_AK = scale(CapacityLostWGT_AK, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT_MK = scale(CapacityLostWGT_MK, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT_EP = scale(CapacityLostWGT_EP, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT_HS = scale(CapacityLostWGT_HS, center = TRUE,
+                                    scale = TRUE),
+         CapacityLostWGT = (CapacityLostWGT_AK + CapacityLostWGT_MK +
+                              CapacityLostWGT_EP + CapacityLostWGT_HS)/4,
+         tod2 = tod * tod, #time of day squared
+         land = as.factor(land),
+         category_code = as.factor(category_code),
+         short_name = as.factor(short_name),
+         weekend = 1*(DAYOFWEEK %in% c("6", "7")))
+covariates <- data.frame(
+  covariate = c("weekend", "HOLIDAYPX", "WDW_TICKET_SEASON",
+                "WDWMEANTEMP", "inSession", "MKPRDDAY", "CapacityLostWGT",
+                "duration", "category_code", "scope_and_scale_code", "tod"),
+  label = c("weekend", "holidayPX", "ticket_season",
+            "mean_temp", "schools", "nb_parades", "capacity_lost",
+            "duration", "category_code", "scope_and_scale_code", "tod"),
+  expl = c("Whether it is a weekend date (TRUE) or not (FALSE). Day of the week was also
+           tested in the model exploration phase.",
+           "Proximity to Holiday (2-directional) (in days)",
+           "Walt Disney World Single Day Price Type (peak, regular, or value)",
+           "Average temperature this day",
+           "The percentage of schools in session",
+           "Number of Daytime Parades at Magic Kingdom",
+           "Total hourly capacity lost on that park day, weighted by attraction popularity. This covariate is centered and normalized.",
+           "Duration of attraction in minutes",
+           "The type of attraction (character_greeting, continuous_show, or ride)",
+           "The type of attraction (headliner, major_attraction, minor_attraction, or  super_headliner)",
+           "Time of day (in hours)"),
+  type = c("binary", "numeric", "discrete", "numeric", "numeric", "numeric",
+           "numeric", "numeric", "discrete", "discrete", "numeric"))
+covariates %>%
+  dplyr::select(label, type) %>%
+  kable(col.names = c("Covariate", "Type"),
+        format = "latex") %>%
+  kableExtra::kable_styling(font_size = 9)
+```
+
+## Model Results
+
+```{r eval = TRUE}
+waiting_times_reg <- waiting_times_reg[complete.cases(waiting_times_reg),]
+mod <- readRDS(file = find_root_file("data", "model.rds",
+                                     criterion =
+                                       has_file(
+                                         "stat_cons_disney.Rproj")))
+# Set MCMC parameters
+nchains <- 3 # number of chains
+niter <- 2000 # number of iterations (incl. burn-in, see next)
+burnin <- niter / 4 # number of initial samples to remove (= burn-in)
+nparallel <- nchains # number of cores for parallel computing
+thinning <- 1 #
+s <- summary(mod, prob = 0.90)
+#pred <- predict(mod)
+#save(pred, file = find_root_file("data", "prediction.Rdata",
+                                     # criterion =
+                                     #   has_file(
+                                     #     "stat_cons_disney.Rproj")))
+load(file = find_root_file("data", "prediction.Rdata",
+                                     criterion =
+                                       has_file(
+                                         "stat_cons_disney.Rproj")))
+```
+
+```{r fixed, fig.cap = "Results for the fixed effects model. The errorbars show 30%, 60%, and 90% confidence intervals.", message = FALSE, warning = FALSE}
+s90 <- summary(mod, prob = 0.90)
+s60 <- summary(mod, prob = 0.60)
+s30 <- summary(mod, prob = 0.30)
+
+
+lbl <- rownames(s90$fixed)
+for (x in seq_len(nrow(covariates))) {
+  lbl <- str_replace(lbl,
+                     covariates[x, "covariate"],
+                     covariates[x, "label"])
+}
+labels <- 
+  data.frame(raw = rownames(s90$fixed),
+             label = lbl)
+
+p <- s90$fixed %>% 
+  left_join(s30$fixed) %>%
+  left_join(s60$fixed) %>%
+  cbind(data_frame(par = rownames(s90$fixed))) %>%
+  mutate(color = ifelse(`l-90% CI` > 0, "red",
+                       ifelse(`u-90% CI` < 0, "blue",
+                              "black"))) %>%
+  ggplot(aes(x = par, y = Estimate, color = color)) +
+  geom_point(size = 2) + 
+  geom_linerange(aes(ymin = `l-90% CI`, ymax = `u-90% CI`), linewidth = 0.5) +
+  geom_linerange(aes(ymin = `l-60% CI`, ymax = `u-60% CI`), linewidth = 1) +
+  geom_linerange(aes(ymin = `l-30% CI`, ymax = `u-30% CI`), linewidth = 1.5) +
+  geom_hline(aes(yintercept = 0), color = "black") +
+  coord_flip() +
+  theme_bw() +
+  scale_color_manual("",
+                       breaks = c("blue", "black", "red"),
+                       values = c("#005AB5", "black", "#DC3220")) +#colorblind friendly
+  theme(legend.position = "none") +
+  scale_x_discrete(name = "",
+                   limits = labels$raw,
+                   labels = labels$label)
+p
+```
+
+##
+
+```{r random, fig.cap = "Random effect for each of the attractions, sorted from highest to lowest difference between posted and actual waiting time."}
+sd_mean <- mod %>%
+  spread_draws(sd_short_name__Intercept, ndraws = 1000, seed = 123) %>%
+  summarise(mean_sd = mean(sd_short_name__Intercept)) %>%
+  pull()
+
+# Neem random effects en plot
+mod %>%
+  spread_draws(r_short_name[short_name,], ndraws = 1000, seed = 123) %>%
+  ungroup() %>%
+  mutate(short_name = reorder(short_name, r_short_name)) %>%
+  ggplot(aes(x = r_short_name, y = short_name)) +
+    geom_vline(xintercept = 0, color = "darkgrey", linewidth = 1) +
+    geom_vline(xintercept = c(sd_mean * qnorm(0.05), sd_mean * qnorm(0.95)),
+               color = "darkgrey", linetype = 2) +
+    stat_halfeye(point_interval = "median_qi", .width = 0.9, size = 2/3,
+                 fill = "cornflowerblue") +
+  theme_bw() +
+  ylab("Attraction") +
+  xlab("Random intercept")
+```
+
+# Conclusion
+
+## Discussion
+
+- Posted waiting times are, on average quite accurate.
+- More likely that the posted waiting time overestimates the actual waiting time
+- Improve predictions during weekends and in the evening, for headliners and character greetings
+
+## Recommendations for future research
+
+- Add data on throughput per attraction and total number of visitors.
+- Reduce missingness in the data
+- Variable selection techniques
